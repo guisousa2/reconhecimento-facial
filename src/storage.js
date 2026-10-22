@@ -16,22 +16,39 @@ export class LocalRepository{
  configure(settings){this.commit({...this.data,settings});}
 }
 
-// Pessoas são persistidas pelo servidor; histórico e configurações continuam locais.
+// Com Supabase, todos os dados vêm do servidor; no modo local, mantém compatibilidade.
+async function readPeopleResponse(response){
+ if(!response.headers.get('content-type')?.toLowerCase().includes('application/json'))throw new Error('Servidor de cadastros indisponível. Execute node server.mjs na pasta do projeto e abra http://localhost:3000. Não utilize Live Server nem abra index.html diretamente.');
+ let data;try{data=await response.json();}catch{throw new Error('O servidor retornou JSON inválido. Confira o banco e reinicie node server.mjs.');}
+ if(!response.ok)throw new Error(data?.error??'Falha ao acessar o banco.');
+ if(!data||!Number.isSafeInteger(data.version)||data.version<0||!Array.isArray(data.people))throw new Error('Resposta inválida do servidor de cadastros. Confira o banco configurado.');
+ return data;
+}
+
 export class FileRepository extends LocalRepository{
  static async open(){
-  const repo=new FileRepository();const response=await fetch('/api/people',{cache:'no-store'});
-  const remote=await response.json();if(!response.ok)throw new Error(remote.error??'Não foi possível carregar banco.json.');
+  const response=await fetch('/api/people',{cache:'no-store'});
+  const remote=await readPeopleResponse(response);
+  // Dados antigos do navegador não bloqueiam nem sobrescrevem o banco remoto.
+  const repo=remote.backend==='supabase'?new FileRepository({getItem:()=>null,setItem:()=>{}}):new FileRepository();
+  repo.backend=remote.backend??'local';
   const previous=repo.people;repo.version=remote.version;repo.data={...repo.data,people:remote.people};
   // Migração única dos cadastros do protótipo quando o arquivo ainda está vazio.
   if(remote.version===0&&remote.people.length===0&&previous.length)await repo.savePeople(previous);
+  if(repo.backend==='supabase')repo.data={...repo.data,history:remote.history,settings:remote.settings};
   repo.commit(repo.data);return repo;
  }
  commit(next){this.storage.setItem(KEY,JSON.stringify({...next,people:[]}));this.data=next;}
  async savePeople(people){
   const response=await fetch('/api/people',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:this.version,people})});
-  const saved=await response.json();if(!response.ok)throw new Error(saved.error??'Falha ao salvar banco.json.');
+  const saved=await readPeopleResponse(response);
   this.version=saved.version;this.data={...this.data,people:saved.people};
  }
+ async refresh(){const remote=await readPeopleResponse(await fetch('/api/people',{cache:'no-store'}));this.version=remote.version;this.data={...this.data,people:remote.people,...(this.backend==='supabase'?{history:remote.history,settings:remote.settings}:{})};}
+ async refreshRecognition(){const response=await fetch(`/api/recognition?version=${this.version}`,{cache:'no-store'});if(!response.ok)throw new Error('Falha ao atualizar autorizações. Confira a conexão com o servidor.');const remote=await response.json();if(!remote||!Number.isSafeInteger(remote.version)||!remote.settings||!(remote.people===null||Array.isArray(remote.people)))throw new Error('Resposta de reconhecimento inválida.');this.version=remote.version;this.data={...this.data,people:remote.people??this.people,settings:remote.settings};}
+ async remoteWrite(path,method,body){const response=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.headers.get('content-type')?.includes('application/json'))throw new Error('Servidor indisponível.');const data=await response.json();if(!response.ok)throw new Error(data.error??'Falha ao salvar no servidor.');return data;}
+ async log(result){if(this.backend!=='supabase')return super.log(result);const entry=await this.remoteWrite('/api/history','POST',{id:crypto.randomUUID(),personId:result.person?.id??null});this.data={...this.data,history:[entry,...this.history.filter(h=>h.id!==entry.id)].slice(0,2000)};return entry;}
+ async configure(settings){if(this.backend!=='supabase')return super.configure(settings);const saved=await this.remoteWrite('/api/settings','PUT',settings);this.data={...this.data,settings:saved};}
  async addPerson(person){if(this.people.some(p=>p.id.toLocaleLowerCase()===person.id.toLocaleLowerCase()))throw new Error('Já existe uma pessoa com este ID.');await this.savePeople([...this.people,person]);}
  async removePerson(id){await this.savePeople(this.people.filter(p=>p.id!==id));}
  async togglePerson(id){await this.savePeople(this.people.map(p=>p.id===id?{...p,authorized:!p.authorized}:p));}

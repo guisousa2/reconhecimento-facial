@@ -2,6 +2,8 @@
 
 ## Executar localmente
 
+**Integração Supabase disponível:** para compartilhar pessoas, histórico e configurações no banco, use Node.js 22 ou superior e siga o [guia de configuração e migração](supabase/README.md). Execute o SQL atualizado completo e configure `.env` conforme [.env.example](.env.example), depois rode `npm.cmd start`. Com Supabase ativo, as descrições de armazenamento em `banco.json` e localStorage abaixo se aplicam apenas ao modo local. A chave secreta fica exclusivamente no servidor.
+
 Requisitos: Node.js 20.11 ou superior, webcam e Chrome/Edge atual. Não há dependências npm para instalar; o servidor usa módulos nativos do Node. Bibliotecas de visão e modelos são carregados no navegador com versões fixas.
 
 ```powershell
